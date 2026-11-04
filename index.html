@@ -173,7 +173,7 @@ code,.mono{font-family:ui-monospace,Menlo,Consolas,monospace}
         <label class="toggle" style="margin-top:8px"><input type="checkbox" id="remember"> Ingat di perangkat ini (localStorage). Kosongkan untuk hanya selama tab terbuka.</label>
       </div>
       <div class="grid two" style="margin-top:12px">
-        <div><span class="lbl">Tipe aset</span><select id="aType"><option value="Audio">Audio (.mp3 / .ogg)</option><option value="Decal">Decal / Gambar (.png .jpg)</option><option value="Model">Model (.fbx)</option></select></div>
+        <div><span class="lbl">Tipe aset</span><select id="aType"><option value="Audio">Audio (.mp3 / .ogg)</option><option value="Decal">Decal / Gambar (.png .jpg)</option><option value="Model">Model (.fbx)</option><option value="Animation">Emote / Pose / Animasi (.rbxm)</option></select></div>
         <div><span class="lbl">Tipe pemilik</span><select id="cType"><option value="User">User ID (pribadi)</option><option value="Group">Group ID</option></select></div>
         <div><span class="lbl">ID pemilik</span><input type="number" id="cId" placeholder="12345678"></div>
         <div><span class="lbl">Nama aset</span><input type="text" id="aName" value="Club Track" maxlength="50"></div>
@@ -181,6 +181,7 @@ code,.mono{font-family:ui-monospace,Menlo,Consolas,monospace}
       <div style="margin-top:12px"><span class="lbl">File</span>
         <input type="file" id="upFile">
         <p class="note" id="srcNote"></p>
+        <p class="note" id="animNote" style="display:none">Mode Emote/Pose: pilih file <b>.rbxm</b> / <b>.rbxmx</b> hasil simpan dari Roblox Studio (Animation Editor &gt; Export). File yang diedit di luar Studio bisa gagal diunggah. Hasilnya adalah Animation ID, bukan Sound ID.</p>
       </div>
       <button class="btn" id="upBtn" style="margin-top:12px">UNGGAH ASET</button>
       <div class="status" id="uStatus"></div>
@@ -306,10 +307,18 @@ $('toUp').onclick=()=>{
 function updSrc(){ $('srcNote').textContent=pending&&!$('upFile').files.length?`Sumber: hasil Audio Studio (${pending.name}, ${(pending.blob.size/1048576).toFixed(2)} MB). Pilih file lain untuk menggantinya.`:'' }
 $('upFile').addEventListener('change',()=>{ pending=null; updSrc() });
 
+function onType(){
+  const t=$('aType').value; $('upFile').accept=ACCEPT[t]||'';
+  $('animNote').style.display=t==='Animation'?'block':'none';
+  if(t==='Animation'&&($('aName').value==='Club Track'||!$('aName').value)) $('aName').value='Club Emote';
+}
+$('aType').addEventListener('change',onType); onType();
+
 const savedKey=safe.get('rbx_api_key'); if(savedKey){$('apiKey').value=savedKey;$('remember').checked=!!localStorage.getItem('rbx_api_key')}
 if(safe.get('rbx_creator_id')) $('cId').value=safe.get('rbx_creator_id');
 
-const MIME={mp3:'audio/mpeg',ogg:'audio/ogg',wav:'audio/wav',png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',fbx:'model/fbx'};
+const MIME={mp3:'audio/mpeg',ogg:'audio/ogg',wav:'audio/wav',png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',fbx:'model/fbx',rbxm:'model/x-rbxm',rbxmx:'model/x-rbxm'};
+const ACCEPT={Audio:'.mp3,.ogg,.wav,.flac,audio/*',Decal:'.png,.jpg,.jpeg,.bmp,.tga',Model:'.fbx,.glb,.gltf',Animation:'.rbxm,.rbxmx'};
 async function api(path,key,init={}){
   init.headers={...(init.headers||{}),'x-api-key':key};
   const r=await fetch('/api/roblox?p='+encodeURIComponent(path),init);
@@ -323,6 +332,12 @@ $('upBtn').onclick=async()=>{
   if($('upFile').files.length){blob=$('upFile').files[0];fname=blob.name} else if(pending){blob=pending.blob;fname=pending.name}
   if(!key||!id||!blob) return setStatus('uStatus','Lengkapi API Key, ID pemilik, dan file.',true);
   if(blob.size>4.4*1048576) return setStatus('uStatus','File lebih dari 4,4 MB: melebihi batas body Vercel. Kecilkan (MP3 / perpendek).',true);
+  if($('aType').value==='Animation'){
+    const ex=(fname.split('.').pop()||'').toLowerCase();
+    if(!['rbxm','rbxmx'].includes(ex)) return setStatus('uStatus','Tipe Animation hanya menerima .rbxm / .rbxmx.',true);
+    const head=await blob.slice(0,8).text();
+    if(!(head.startsWith('<roblox!')||head.startsWith('<roblox '))) return setStatus('uStatus','File bukan format Roblox (.rbxm/.rbxmx) yang valid.',true);
+  }
   // simpan: key hanya di localStorage jika dicentang, selain itu sessionStorage
   safe.del('rbx_api_key'); safe.set($('remember').checked?localStorage:sessionStorage,'rbx_api_key',key); safe.set(localStorage,'rbx_creator_id',id);
   const ext=(fname.split('.').pop()||'').toLowerCase(), type=blob.type||MIME[ext]||'application/octet-stream';
@@ -345,6 +360,11 @@ $('upBtn').onclick=async()=>{
   $('upBtn').disabled=false;
 };
 function cfg(){
+  const isAnim=$('aType').value==='Animation';
+  document.querySelector('#uResult .ok').textContent=isAnim?'✓ Berhasil diunggah · Animation ID':'✓ Berhasil diunggah · Asset ID';
+  document.querySelector('#uResult .row:has(#cfgSpeed)').style.display=isAnim?'none':'';
+  if(isAnim){ const aid=$('uResult').dataset.id||'0', t=$('aName').value.replace(/"/g,'');
+    $('uCfg').textContent=`{Title = "${t}", AnimationId = "rbxassetid://${aid}"},`; return; }
   const id=$('uResult').dataset.id||'0', sp=Math.min(2,Math.max(0.5,parseFloat($('cfgSpeed').value)||1));
   const title=$('aName').value.replace(/"/g,'');
   $('uCfg').textContent=`{Id = "S_${id}", Title = "${title}", Artist = "Artist", SoundId = "rbxassetid://${id}", Cover = "rbxassetid://0"${sp!==1?`, Speed = ${sp}`:''}},`;
